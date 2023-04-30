@@ -1,0 +1,23 @@
+name: KeepInventoryShop
+version: 1.0
+main: keepinventoryshop.KeepInventoryShop
+authors: [oMrSnow]
+description: A plugin to purchase Keep Inventory lives
+api-version: 1.19
+depend: [Vault]
+softdepend: [WorldGuard]
+commands:
+  keepinventory:
+    description: Purchase Keep Inventory lives or show help message
+    usage: /keepinventory [number of lives]
+    aliases: [keepinventory, ki]
+  keepinventoryreload:
+    description: Reload the plugin configuration (requires permission).
+    usage: /keepinventory reload
+  keepinventoryhelp:
+    description: Show help for Keep Inventory commands.
+    usage: /keepinventory help
+permissions:
+  keepinventoryshop.reload:
+    description: Allows the player to reload the Keep Inventory configuration.
+    default: op

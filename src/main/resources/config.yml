@@ -1,0 +1,14 @@
+# The initial number of lives a player receives when joining for the first time
+initial-lives: 3
+
+# Whether or not to give players extra lives upon joining
+include-lives-on-join: true
+
+# The number of lives given to players upon joining, only if include-lives-on-join is set to true
+lives-on-join: 1
+
+# The timer, in seconds, between giving out lives-on-join
+join-timer: 10800
+
+# Cost of a single Keep Inventory life
+cost-per-life: 500
