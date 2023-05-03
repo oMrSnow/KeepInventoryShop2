@@ -53,7 +53,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     public boolean isUseRegion() {
         return useRegion;
     }
-
+    private Set<UUID> noLivesPlayers = new HashSet<>();
     private Map<UUID, Integer> playerKeepInventoryMap = new HashMap<>();
     private Set<UUID> deactivatedMessageSentPlayers;
 
@@ -275,7 +275,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         Player player = event.getEntity();
         UUID playerUUID = player.getUniqueId();
         int remainingLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, Integer.valueOf(0)).intValue();
-        int remainingUpgradedLives = this.playerUpgradedKeepInventoryMap.getOrDefault(playerUUID, Integer.valueOf(0)).intValue();
         boolean isInRegion = true;
         if (isUseRegion()) {
             isInRegion = isPlayerInRegion(player, "keep_inventory_zone");
@@ -287,22 +286,39 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             event.setDroppedExp(0);
             event.getDrops().clear();
 
-            remainingLives -= 1;
+            if (remainingLives > 1) {
+                remainingLives -= 1;
+            } else {
+                remainingLives = 0;
+                noLivesPlayers.add(playerUUID);
+            }
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(remainingLives));
             getPlayerDataConfig().set(playerUUID + ".lives", Integer.valueOf(remainingLives));
             savePlayerDataConfig();
 
             final int finalRemainingLives = remainingLives;
             Bukkit.getScheduler().runTaskLater((Plugin)this, () -> {
-                if (finalRemainingLives == 0) {
+                if (finalRemainingLives == 0 && !deactivatedMessageSentPlayers.contains(playerUUID)) {
                     player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
-                } else {
+                    deactivatedMessageSentPlayers.add(playerUUID);
+                } else if (finalRemainingLives > 0) {
                     player.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + finalRemainingLives + ChatColor.WHITE + " " + getLifeWordForm(finalRemainingLives) + " left.");
                 }
             }, 30L);
-        } else if (remainingLives <= 0) {
+        } else {
             event.setKeepInventory(false);
             event.setKeepLevel(false);
+
+            // Drop the player's items manually
+            if (noLivesPlayers.contains(playerUUID)) {
+                for (ItemStack item : player.getInventory().getContents()) {
+                    if (item != null) {
+                        player.getWorld().dropItemNaturally(player.getLocation(), item);
+                    }
+                }
+                // Clear the player's inventory
+                player.getInventory().clear();
+            }
         }
 
         if (!player.hasMetadata("keepInventoryWarningShown") && player.getWorld().getGameRuleValue(GameRule.KEEP_INVENTORY).booleanValue()) {
@@ -344,20 +360,15 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
                     this.playerUpgradedKeepInventoryMap.remove(playerUUID);
                     player.sendMessage(ChatColor.RED + "You have run out of Upgraded lives.");
 
-                    // Check if the player is out of normal KeepInventory lives and hasn't been notified yet
+                    // Check if the player is out of normal KeepInventory lives
                     int remainingLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, 0);
-                    if (remainingLives == 0 && !deactivatedMessageSentPlayers.contains(playerUUID)) {
-                        player.sendMessage(ChatColor.RED + "KeepInventory Deactivated");
-                        deactivatedMessageSentPlayers.add(playerUUID);
+                    if (remainingLives == 0) {
+                        noLivesPlayers.add(playerUUID);
                     }
                 }
             }
         }
     }
-
-
-
-
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
