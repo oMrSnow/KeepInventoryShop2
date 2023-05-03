@@ -33,6 +33,8 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 
 public class KeepInventoryShop extends JavaPlugin implements Listener {
+    private Set<UUID> deactivatedMessageSentPlayers = new HashSet<>();
+
     public Map<UUID, Integer> getPlayerUpgradedKeepInventoryMap() {
         return playerUpgradedKeepInventoryMap;
     }
@@ -55,7 +57,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     }
     private Set<UUID> noLivesPlayers = new HashSet<>();
     private Map<UUID, Integer> playerKeepInventoryMap = new HashMap<>();
-    private Set<UUID> deactivatedMessageSentPlayers;
 
     private Map<UUID, Long> lastLoginTimestamp;
 
@@ -218,7 +219,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         UUID playerUUID = player.getUniqueId();
         int savedLives = getPlayerDataConfig().getInt("players." + playerUUID.toString() + ".lives", -1);
 
-        // If the player is not in the playerKeepInventoryMap and has no saved lives, it's their first join
         if (!playerKeepInventoryMap.containsKey(playerUUID) && savedLives == -1) {
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(this.initialLives));
             getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", Integer.valueOf(this.initialLives));
@@ -231,6 +231,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         if (timeDifference >= this.joinTimer) {
             giveLivesOnJoin(player);
             this.lastLivesReceivedTimestamp.put(playerUUID, Long.valueOf(System.currentTimeMillis()));
+            deactivatedMessageSentPlayers.remove(playerUUID); // Remove the player from the deactivatedMessageSentPlayers set
         } else {
             displayCurrentLives(player);
         }
@@ -264,7 +265,10 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             int currentLives = ((Integer)this.playerKeepInventoryMap.get(playerUUID)).intValue();
             int newLives = currentLives + this.livesOnJoin;
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(newLives));
+            getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", newLives);
+            savePlayerDataConfig();
             player.sendMessage(ChatColor.WHITE + "You received " + ChatColor.LIGHT_PURPLE + this.livesOnJoin + " KeepInventory " + ChatColor.WHITE + getLifeWordForm(this.livesOnJoin) + ". You now have " + ChatColor.LIGHT_PURPLE + newLives + ChatColor.WHITE + " " + getLifeWordForm(newLives) + ".");
+            deactivatedMessageSentPlayers.remove(playerUUID); // Remove the player from the deactivatedMessageSentPlayers set
         } else {
             displayCurrentLives(player);
         }
@@ -281,10 +285,17 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         }
 
         if (remainingLives > 0 || isInRegion) {
-            event.setKeepInventory(true);
-            event.setKeepLevel(true);
-            event.setDroppedExp(0);
-            event.getDrops().clear();
+            // Check if the player is in the noLivesPlayers set
+            if (noLivesPlayers.contains(playerUUID)) {
+                event.setKeepInventory(false);
+                event.setKeepLevel(false);
+                noLivesPlayers.remove(playerUUID);
+            } else {
+                event.setKeepInventory(true);
+                event.setKeepLevel(true);
+                event.setDroppedExp(0);
+                event.getDrops().clear();
+            }
 
             if (remainingLives > 1) {
                 remainingLives -= 1;
@@ -297,7 +308,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             savePlayerDataConfig();
 
             final int finalRemainingLives = remainingLives;
-            Bukkit.getScheduler().runTaskLater((Plugin)this, () -> {
+            Bukkit.getScheduler().runTaskLater((Plugin) this, () -> {
                 if (finalRemainingLives == 0 && !deactivatedMessageSentPlayers.contains(playerUUID)) {
                     player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
                     deactivatedMessageSentPlayers.add(playerUUID);
@@ -308,22 +319,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         } else {
             event.setKeepInventory(false);
             event.setKeepLevel(false);
-
-            // Check if the player is in the noLivesPlayers set
-            if (noLivesPlayers.contains(playerUUID)) {
-                // Drop the player's items manually
-                for (ItemStack item : player.getInventory().getContents()) {
-                    if (item != null) {
-                        player.getWorld().dropItemNaturally(player.getLocation(), item);
-                    }
-                }
-
-                // Clear the player's inventory
-                player.getInventory().clear();
-
-                // Remove the player from the noLivesPlayers set
-                noLivesPlayers.remove(playerUUID);
-            }
         }
 
         if (!player.hasMetadata("keepInventoryWarningShown") && player.getWorld().getGameRuleValue(GameRule.KEEP_INVENTORY).booleanValue()) {
@@ -369,11 +364,19 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
                     int remainingLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, 0);
                     if (remainingLives == 0) {
                         noLivesPlayers.add(playerUUID);
+                        if (!deactivatedMessageSentPlayers.contains(playerUUID)) {
+                            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
+                            deactivatedMessageSentPlayers.add(playerUUID);
+                        }
+                    } else {
+                        deactivatedMessageSentPlayers.remove(playerUUID);
+                        player.sendMessage(ChatColor.LIGHT_PURPLE + "Upgraded " + getLifeWordForm(remainingUpgradedLives - 1) + " Deactivated, " + ChatColor.WHITE + remainingLives + " KI " + getLifeWordForm(remainingLives) + " Remaining.");
                     }
                 }
             }
         }
     }
+
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
