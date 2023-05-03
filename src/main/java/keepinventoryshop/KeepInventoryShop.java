@@ -309,15 +309,20 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             event.setKeepInventory(false);
             event.setKeepLevel(false);
 
-            // Drop the player's items manually
+            // Check if the player is in the noLivesPlayers set
             if (noLivesPlayers.contains(playerUUID)) {
+                // Drop the player's items manually
                 for (ItemStack item : player.getInventory().getContents()) {
                     if (item != null) {
                         player.getWorld().dropItemNaturally(player.getLocation(), item);
                     }
                 }
+
                 // Clear the player's inventory
                 player.getInventory().clear();
+
+                // Remove the player from the noLivesPlayers set
+                noLivesPlayers.remove(playerUUID);
             }
         }
 
