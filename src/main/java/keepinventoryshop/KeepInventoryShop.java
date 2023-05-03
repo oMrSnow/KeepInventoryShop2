@@ -278,14 +278,14 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player player = event.getEntity();
         UUID playerUUID = player.getUniqueId();
-        int remainingLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, Integer.valueOf(0)).intValue();
+        int remainingLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, 0);
         boolean isInRegion = true;
         if (isUseRegion()) {
             isInRegion = isPlayerInRegion(player, "keep_inventory_zone");
         }
 
         if (remainingLives > 0 || isInRegion) {
-            // Check if the player is in the noLivesPlayers set
+            this.playerKeepInventoryMap.put(playerUUID, remainingLives);
             if (noLivesPlayers.contains(playerUUID)) {
                 event.setKeepInventory(false);
                 event.setKeepLevel(false);
@@ -299,33 +299,31 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
 
             if (remainingLives > 1) {
                 remainingLives -= 1;
+                final int livesToDisplay = remainingLives;
+                Bukkit.getScheduler().runTaskLater(this, () -> player.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + livesToDisplay + ChatColor.WHITE + " " + getLifeWordForm(livesToDisplay) + " left."), 5L);
             } else {
                 remainingLives = 0;
-                noLivesPlayers.add(playerUUID);
-            }
-            this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(remainingLives));
-            getPlayerDataConfig().set(playerUUID + ".lives", Integer.valueOf(remainingLives));
-            savePlayerDataConfig();
-
-            final int finalRemainingLives = remainingLives;
-            Bukkit.getScheduler().runTaskLater((Plugin) this, () -> {
-                if (finalRemainingLives == 0 && !deactivatedMessageSentPlayers.contains(playerUUID)) {
-                    player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
-                    deactivatedMessageSentPlayers.add(playerUUID);
-                } else if (finalRemainingLives > 0) {
-                    player.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + finalRemainingLives + ChatColor.WHITE + " " + getLifeWordForm(finalRemainingLives) + " left.");
+                if (!noLivesPlayers.contains(playerUUID)) {
+                    noLivesPlayers.add(playerUUID);
+                    Bukkit.getScheduler().runTaskLater(this, () -> handleKeepInventoryDeactivated(player), 5L);
+                } else {
+                    event.setKeepInventory(false);
+                    event.setKeepLevel(false);
+                    return;
                 }
-            }, 30L);
+            }
+            this.playerKeepInventoryMap.put(playerUUID, remainingLives);
+            getPlayerDataConfig().set(playerUUID + ".lives", remainingLives);
+            savePlayerDataConfig();
         } else {
             event.setKeepInventory(false);
             event.setKeepLevel(false);
         }
 
         if (!player.hasMetadata("keepInventoryWarningShown") && player.getWorld().getGameRuleValue(GameRule.KEEP_INVENTORY).booleanValue()) {
-            player.setMetadata("keepInventoryWarningShown", new FixedMetadataValue(this, Boolean.valueOf(true)));
+            player.setMetadata("keepInventoryWarningShown", new FixedMetadataValue(this, true));
         }
     }
-
 
     @EventHandler
     public void onEntityDamage(EntityDamageEvent event) {
@@ -335,47 +333,65 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             int remainingUpgradedLives = this.playerUpgradedKeepInventoryMap.getOrDefault(playerUUID, 0);
 
             if (remainingUpgradedLives > 0 && player.getHealth() - event.getFinalDamage() <= 0) {
-                event.setCancelled(true);
+                event.setDamage(0); // Cancel the damage
+                consumeUpgradedLife(player, remainingUpgradedLives);
 
                 // Apply enchanted golden apple effects
-                player.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 100, 4)); // 5 seconds, level 5
+                player.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 200, 3)); // 10 seconds, level 4
                 player.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION, 100, 3)); // 5 seconds, level 4
                 player.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 100, 0)); // 5 seconds, level 1
                 player.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, 200, 0)); // 10 seconds, level 1
-
-                // Particle effect
-                double spread = 0.5;
-                player.getWorld().spawnParticle(Particle.SPELL_INSTANT, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0);
-                player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0, new Particle.DustOptions(Color.PURPLE, 1.0F));
-                player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0, new Particle.DustOptions(Color.WHITE, 1.0F));
-
-                // Sound effect
-                player.playSound(player.getLocation(), Sound.ITEM_TOTEM_USE, 1.0F, 1.0F);
-
-                // Update the remaining upgraded lives
-                if (remainingUpgradedLives > 1) {
-                    this.playerUpgradedKeepInventoryMap.put(playerUUID, remainingUpgradedLives - 1);
-                    player.sendMessage(ChatColor.GREEN + "Your upgraded KeepInventory life saved you! You have " + (remainingUpgradedLives - 1) + " upgraded " + getLifeWordForm(remainingUpgradedLives - 1) + " remaining.");
-                } else {
-                    this.playerUpgradedKeepInventoryMap.remove(playerUUID);
-                    player.sendMessage(ChatColor.RED + "You have run out of Upgraded lives.");
-
-                    // Check if the player is out of normal KeepInventory lives
-                    int remainingLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, 0);
-                    if (remainingLives == 0) {
-                        noLivesPlayers.add(playerUUID);
-                        if (!deactivatedMessageSentPlayers.contains(playerUUID)) {
-                            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
-                            deactivatedMessageSentPlayers.add(playerUUID);
-                        }
-                    } else {
-                        deactivatedMessageSentPlayers.remove(playerUUID);
-                        player.sendMessage(ChatColor.LIGHT_PURPLE + "Upgraded " + getLifeWordForm(remainingUpgradedLives - 1) + " Deactivated, " + ChatColor.WHITE + remainingLives + " KI " + getLifeWordForm(remainingLives) + " Remaining.");
-                    }
-                }
             }
         }
     }
+
+    public void consumeUpgradedLife(Player player, int remainingUpgradedLives) {
+        UUID playerUUID = player.getUniqueId();
+
+        // Heal the player and clear any existing potion effects
+        player.setHealth(player.getMaxHealth());
+        player.getActivePotionEffects().forEach(effect -> player.removePotionEffect(effect.getType()));
+
+        // Apply enchanted golden apple effects
+        player.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 200, 3)); // 10 seconds, level 4
+        player.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION, 100, 3)); // 5 seconds, level 4
+        player.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 100, 0)); // 5 seconds, level 1
+        player.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, 200, 0)); // 10 seconds, level 1
+
+        // Particle effect
+        double spread = 0.5;
+        player.getWorld().spawnParticle(Particle.SPELL_INSTANT, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0);
+        player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0, new Particle.DustOptions(Color.PURPLE, 1.0F));
+        player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0, new Particle.DustOptions(Color.WHITE, 1.0F));
+
+        // Sound effect
+        player.playSound(player.getLocation(), Sound.ITEM_TOTEM_USE, 1.0F, 1.0F);
+
+        // Update the remaining upgraded lives
+        if (remainingUpgradedLives > 1) {
+            this.playerUpgradedKeepInventoryMap.put(playerUUID, remainingUpgradedLives - 1);
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepTotem" + ChatColor.WHITE + " life saved you! You have " + ChatColor.LIGHT_PURPLE + (remainingUpgradedLives - 1) + " KeepTotem " + getLifeWordForm(remainingUpgradedLives - 1) + ChatColor.WHITE + " Remaining.");
+        } else {
+            this.playerUpgradedKeepInventoryMap.remove(playerUUID);
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepTotem" + ChatColor.RED +" Deactivated");
+
+            // Add player back to noLivesPlayers if they have no remaining regular lives
+            int remainingRegularLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, 0);
+            if (remainingRegularLives == 0) {
+                noLivesPlayers.add(playerUUID);
+            }
+        }
+    }
+
+    public void handleKeepInventoryDeactivated(Player player) {
+        UUID playerUUID = player.getUniqueId();
+
+        if (!deactivatedMessageSentPlayers.contains(playerUUID)) {
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
+            deactivatedMessageSentPlayers.add(playerUUID);
+        }
+    }
+
 
 
     @EventHandler
