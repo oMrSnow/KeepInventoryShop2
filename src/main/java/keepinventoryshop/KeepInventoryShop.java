@@ -15,6 +15,7 @@ import net.milkbowl.vault.economy.Economy;
 import org.bukkit.*;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -24,6 +25,7 @@ import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.metadata.MetadataValue;
 import org.bukkit.plugin.Plugin;
@@ -31,9 +33,27 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.EulerAngle;
 
 public class KeepInventoryShop extends JavaPlugin implements Listener {
+    private static KeepInventoryShop instance;
+    public static KeepInventoryShop getInstance() {
+        return instance;
+    }
+    public boolean isProtocolLibInstalled() {
+        Plugin plugin = getServer().getPluginManager().getPlugin("ProtocolLib");
+        return plugin != null && plugin.isEnabled();
+    }
     private Set<UUID> deactivatedMessageSentPlayers = new HashSet<>();
+    public void removeDeactivatedMessageSentPlayer(UUID playerUUID) {
+        deactivatedMessageSentPlayers.remove(playerUUID);
+    }
+    private double costPerUpgrade;
+
+    public void setCostPerUpgrade(double costPerUpgrade) {
+        this.costPerUpgrade = costPerUpgrade;
+    }
 
     public Map<UUID, Integer> getPlayerUpgradedKeepInventoryMap() {
         return playerUpgradedKeepInventoryMap;
@@ -43,6 +63,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     private File playerDataFile;
 
     private int costPerLife;
+    private String resourcePackUrl;
 
     private long joinTimer;
 
@@ -76,7 +97,24 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         return this.costPerLife;
     }
     //Upgraded life
-    private double costPerUpgrade;
+    public void setInitialLives(int initialLives) {
+        this.initialLives = initialLives;
+    }
+    public void setLivesOnJoin(int livesOnJoin) {
+        this.livesOnJoin = livesOnJoin;
+    }
+
+    public void setIncludeLivesOnJoin(boolean includeLivesOnJoin) {
+        this.includeLivesOnJoin = includeLivesOnJoin;
+    }
+
+    public void setJoinTimer(long joinTimer) {
+        this.joinTimer = joinTimer;
+    }
+
+    private void playTotemAnimation(ArmorStand armorStand) {
+        armorStand.getWorld().playSound(armorStand.getLocation(), Sound.ITEM_TOTEM_USE, 1.0F, 1.0F);
+    }
 
     public void loadPluginConfiguration() {
         getConfig().options().copyDefaults(true);
@@ -88,6 +126,8 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     private Map<UUID, Integer> playerUpgradedKeepInventoryMap = new HashMap<>();
 
     public void onEnable() {
+        instance = this;
+
         if (!setupEconomy()) {
             getLogger().severe("Could not find Vault! Disabling plugin.");
             Bukkit.getPluginManager().disablePlugin((Plugin)this);
@@ -112,6 +152,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         getCommand("keepinventory").setExecutor(new KeepInventoryLivesCommand(this));
         getCommand("keepinventory").setTabCompleter(new KeepInventoryLivesCommand(this));
         deactivatedMessageSentPlayers = new HashSet<>();
+        getServer().getPluginManager().registerEvents(this, this);
     }
     public double getCostPerUpgrade() {
         return costPerUpgrade;
@@ -128,6 +169,13 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             int remainingLives = ((Integer)entry.getValue()).intValue();
             getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", Integer.valueOf(remainingLives));
         }
+
+        for (Map.Entry<UUID, Integer> entry : this.playerUpgradedKeepInventoryMap.entrySet()) {
+            UUID playerUUID = entry.getKey();
+            int remainingUpgradedLives = ((Integer)entry.getValue()).intValue();
+            getPlayerDataConfig().set("players." + playerUUID.toString() + ".upgradedLives", Integer.valueOf(remainingUpgradedLives));
+        }
+
         savePlayerDataConfig();
     }
 
@@ -218,22 +266,36 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         Player player = event.getPlayer();
         UUID playerUUID = player.getUniqueId();
         int savedLives = getPlayerDataConfig().getInt("players." + playerUUID.toString() + ".lives", -1);
+        int savedUpgradedLives = getPlayerDataConfig().getInt("players." + playerUUID.toString() + ".upgradedLives", -1);
 
-        if (!playerKeepInventoryMap.containsKey(playerUUID) && savedLives == -1) {
+        boolean isFirstJoin = !getPlayerDataConfig().contains("players." + playerUUID.toString() + ".hasJoinedBefore");
+        getPlayerDataConfig().set("players." + playerUUID.toString() + ".hasJoinedBefore", true);
+        savePlayerDataConfig();
+
+        if (isFirstJoin) {
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(this.initialLives));
             getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", Integer.valueOf(this.initialLives));
             savePlayerDataConfig();
             player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.GREEN + " Activated!" + ChatColor.WHITE + " You have " + ChatColor.LIGHT_PURPLE + this.initialLives + ChatColor.WHITE + " Initial " + getLifeWordForm(this.initialLives) + "!");
         } else {
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(savedLives));
+            this.playerUpgradedKeepInventoryMap.put(playerUUID, savedUpgradedLives);
+
+            long timeDifference = calculateTimeDifference(playerUUID);
+            if (timeDifference >= this.joinTimer) {
+                giveLivesOnJoin(player);
+            } else {
+                displayCurrentLives(player, false);
+            }
         }
-        long timeDifference = calculateTimeDifference(playerUUID);
-        if (timeDifference >= this.joinTimer) {
-            giveLivesOnJoin(player);
-            this.lastLivesReceivedTimestamp.put(playerUUID, Long.valueOf(System.currentTimeMillis()));
-            deactivatedMessageSentPlayers.remove(playerUUID); // Remove the player from the deactivatedMessageSentPlayers set
-        } else {
-            displayCurrentLives(player);
+        // Only set the resource pack if ProtocolLib is installed
+        if (isProtocolLibInstalled()) {
+            String resourcePackURL = getConfig().getString("resourcePackURL");
+            if (resourcePackURL != null && !resourcePackURL.isEmpty()) {
+                getServer().getScheduler().runTaskLater(this, () -> {
+                    player.setResourcePack(resourcePackURL);
+                }, 5L);
+            }
         }
     }
 
@@ -244,10 +306,20 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         return timeDifference;
     }
 
-    private void displayCurrentLives(Player player) {
-        int savedLives = ((Integer)this.playerKeepInventoryMap.getOrDefault(player.getUniqueId(), Integer.valueOf(0))).intValue();
-        if (savedLives > 0) {
-            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.GREEN + " Activated!" + ChatColor.WHITE + " You have " + ChatColor.LIGHT_PURPLE + savedLives + " " + ChatColor.WHITE + getLifeWordForm(savedLives) + "!");
+    private void displayCurrentLives(Player player, boolean onJoin) {
+        int savedLives = this.playerKeepInventoryMap.getOrDefault(player.getUniqueId(), 0);
+        int savedUpgradedLives = this.playerUpgradedKeepInventoryMap.getOrDefault(player.getUniqueId(), 0);
+
+        if (savedLives > 0 || savedUpgradedLives > 0) {
+            if (onJoin) {
+                player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.GREEN + " Activated!");
+            }
+            if (savedLives > 0) {
+                player.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + savedLives + " KeepInventory " + ChatColor.WHITE + getLifeWordForm(savedLives) + ".");
+            }
+            if (savedUpgradedLives > 0) {
+                player.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + savedUpgradedLives + " KeepTotem " + ChatColor.WHITE + getLifeWordForm(savedUpgradedLives) + ".");
+            }
         } else {
             player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated!" + ChatColor.WHITE + " You have 0 lives left.");
         }
@@ -257,20 +329,23 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         UUID playerUUID = player.getUniqueId();
         long lastLogin = player.getLastPlayed();
         long now = System.currentTimeMillis();
-        long lastQuit = ((Long)this.lastQuitTimestamp.getOrDefault(playerUUID, Long.valueOf(0L))).longValue();
+        long lastQuit = this.lastQuitTimestamp.getOrDefault(playerUUID, Long.valueOf(0L));
         long timeDifference = now - Math.max(lastLogin, lastQuit);
-        long timeOnline = now - ((Long)this.lastLoginTimestamp.getOrDefault(playerUUID, Long.valueOf(now))).longValue();
+        long timeOnline = now - this.lastLoginTimestamp.getOrDefault(playerUUID, Long.valueOf(now));
+        boolean isFirstJoin = !getPlayerDataConfig().contains("players." + playerUUID.toString() + ".hasJoinedBefore");
         timeDifference += timeOnline;
         if (timeDifference >= this.joinTimer) {
-            int currentLives = ((Integer)this.playerKeepInventoryMap.get(playerUUID)).intValue();
+            int currentLives = this.playerKeepInventoryMap.get(playerUUID);
             int newLives = currentLives + this.livesOnJoin;
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(newLives));
             getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", newLives);
             savePlayerDataConfig();
+
             player.sendMessage(ChatColor.WHITE + "You received " + ChatColor.LIGHT_PURPLE + this.livesOnJoin + " KeepInventory " + ChatColor.WHITE + getLifeWordForm(this.livesOnJoin) + ". You now have " + ChatColor.LIGHT_PURPLE + newLives + ChatColor.WHITE + " " + getLifeWordForm(newLives) + ".");
-            deactivatedMessageSentPlayers.remove(playerUUID); // Remove the player from the deactivatedMessageSentPlayers set
+
+            deactivatedMessageSentPlayers.remove(playerUUID);
         } else {
-            displayCurrentLives(player);
+            displayCurrentLives(player, false);
         }
     }
 
@@ -285,7 +360,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         }
 
         if (remainingLives > 0 || isInRegion) {
-            this.playerKeepInventoryMap.put(playerUUID, remainingLives);
             if (noLivesPlayers.contains(playerUUID)) {
                 event.setKeepInventory(false);
                 event.setKeepLevel(false);
@@ -298,24 +372,36 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             }
 
             if (remainingLives > 1) {
+                final int finalRemainingLives = remainingLives - 1;
                 remainingLives -= 1;
-                final int livesToDisplay = remainingLives;
-                Bukkit.getScheduler().runTaskLater(this, () -> player.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + livesToDisplay + ChatColor.WHITE + " " + getLifeWordForm(livesToDisplay) + " left."), 5L);
+                Bukkit.getScheduler().runTaskLater(this, () -> player.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + finalRemainingLives + ChatColor.WHITE + " " + getLifeWordForm(finalRemainingLives) + " left."), 5L);
             } else {
-                remainingLives = 0;
                 if (!noLivesPlayers.contains(playerUUID)) {
                     noLivesPlayers.add(playerUUID);
-                    Bukkit.getScheduler().runTaskLater(this, () -> handleKeepInventoryDeactivated(player), 5L);
-                } else {
-                    event.setKeepInventory(false);
-                    event.setKeepLevel(false);
-                    return;
+                    if (!deactivatedMessageSentPlayers.contains(playerUUID)) {
+                        Bukkit.getScheduler().runTaskLater(this, () -> {
+                            if (!deactivatedMessageSentPlayers.contains(playerUUID)) {
+                                player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
+                                deactivatedMessageSentPlayers.add(playerUUID);
+                            }
+                        }, 5L);
+                    }
                 }
+                remainingLives = 0;
             }
             this.playerKeepInventoryMap.put(playerUUID, remainingLives);
             getPlayerDataConfig().set(playerUUID + ".lives", remainingLives);
             savePlayerDataConfig();
         } else {
+            int remainingUpgradedLives = this.playerUpgradedKeepInventoryMap.getOrDefault(playerUUID, 0);
+            if (remainingUpgradedLives == 0 && !deactivatedMessageSentPlayers.contains(playerUUID)) {
+                Bukkit.getScheduler().runTaskLater(this, () -> {
+                    if (!deactivatedMessageSentPlayers.contains(playerUUID)) {
+                        player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
+                        deactivatedMessageSentPlayers.add(playerUUID);
+                    }
+                }, 30L);
+            }
             event.setKeepInventory(false);
             event.setKeepLevel(false);
         }
@@ -324,6 +410,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             player.setMetadata("keepInventoryWarningShown", new FixedMetadataValue(this, true));
         }
     }
+
 
     @EventHandler
     public void onEntityDamage(EntityDamageEvent event) {
@@ -335,12 +422,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             if (remainingUpgradedLives > 0 && player.getHealth() - event.getFinalDamage() <= 0) {
                 event.setDamage(0); // Cancel the damage
                 consumeUpgradedLife(player, remainingUpgradedLives);
-
-                // Apply enchanted golden apple effects
-                player.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 200, 3)); // 10 seconds, level 4
-                player.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION, 100, 3)); // 5 seconds, level 4
-                player.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 100, 0)); // 5 seconds, level 1
-                player.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, 200, 0)); // 10 seconds, level 1
             }
         }
     }
@@ -358,54 +439,59 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         player.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 100, 0)); // 5 seconds, level 1
         player.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, 200, 0)); // 10 seconds, level 1
 
-        // Particle effect
-        double spread = 0.5;
-        player.getWorld().spawnParticle(Particle.SPELL_INSTANT, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0);
-        player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0, new Particle.DustOptions(Color.PURPLE, 1.0F));
-        player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0, 1, 0), 200, spread, spread, spread, 0, new Particle.DustOptions(Color.WHITE, 1.0F));
-
-        // Sound effect
-        player.playSound(player.getLocation(), Sound.ITEM_TOTEM_USE, 1.0F, 1.0F);
+        if (isProtocolLibInstalled()) {
+            // Play custom KeepTotem animation using ProtocolLib
+            CustomSwirlingTask swirlingTask = new CustomSwirlingTask(player);
+            int taskID = swirlingTask.runTaskTimer(this, 0L, 1L).getTaskId();
+            swirlingTask.setTaskID(taskID);
+        } else {
+            // Play  particles and sound effect
+            double spread = 0.5D;
+            player.getWorld().spawnParticle(Particle.SPELL_INSTANT, player.getLocation().add(0.0D, 1.0D, 0.0D), 200, spread, spread, spread, 0.0D);
+            player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0.0D, 1.0D, 0.0D), 200, spread, spread, spread, 0.0D, new Particle.DustOptions(Color.PURPLE, 1.0F));
+            player.getWorld().spawnParticle(Particle.REDSTONE, player.getLocation().add(0.0D, 1.0D, 0.0D), 200, spread, spread, spread, 0.0D, new Particle.DustOptions(Color.WHITE, 1.0F));
+            player.playSound(player.getLocation(), Sound.ITEM_TOTEM_USE, 1.0F, 1.0F);
+        }
 
         // Update the remaining upgraded lives
         if (remainingUpgradedLives > 1) {
             this.playerUpgradedKeepInventoryMap.put(playerUUID, remainingUpgradedLives - 1);
-            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepTotem" + ChatColor.WHITE + " life saved you! You have " + ChatColor.LIGHT_PURPLE + (remainingUpgradedLives - 1) + " KeepTotem " + getLifeWordForm(remainingUpgradedLives - 1) + ChatColor.WHITE + " Remaining.");
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepTotem" + ChatColor.WHITE + " saved you! You have " + ChatColor.LIGHT_PURPLE + (remainingUpgradedLives - 1) + " KeepTotem " + ChatColor.WHITE + getLifeWordForm(remainingUpgradedLives - 1) + " Remaining.");
         } else {
             this.playerUpgradedKeepInventoryMap.remove(playerUUID);
-            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepTotem" + ChatColor.RED +" Deactivated");
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepTotem" + ChatColor.RED + " Deactivated");
 
-            // Add player back to noLivesPlayers if they have no remaining regular lives
+            // Add the "KeepInventory Deactivated" message if no regular lives left
             int remainingRegularLives = this.playerKeepInventoryMap.getOrDefault(playerUUID, 0);
             if (remainingRegularLives == 0) {
                 noLivesPlayers.add(playerUUID);
             }
+
+            deactivatedMessageSentPlayers.remove(playerUUID); // Remove the player from the deactivatedMessageSentPlayers set
         }
     }
-
-    public void handleKeepInventoryDeactivated(Player player) {
-        UUID playerUUID = player.getUniqueId();
-
-        if (!deactivatedMessageSentPlayers.contains(playerUUID)) {
-            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated.");
-            deactivatedMessageSentPlayers.add(playerUUID);
-        }
-    }
-
 
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         UUID playerUUID = player.getUniqueId();
-        int currentLives = ((Integer)this.playerKeepInventoryMap.get(playerUUID)).intValue();
-        getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", Integer.valueOf(currentLives));
-        savePlayerDataConfig();
-        this.lastQuitTimestamp.put(playerUUID, Long.valueOf(System.currentTimeMillis()));
+        int currentLives = playerKeepInventoryMap.getOrDefault(playerUUID, 0);
+        int currentUpgradedLives = playerUpgradedKeepInventoryMap.getOrDefault(playerUUID, 0);
+
+        savePlayerLives(playerUUID, currentLives);
+        savePlayerUpgradedLives(playerUUID, currentUpgradedLives);
+
+        this.lastQuitTimestamp.put(playerUUID, System.currentTimeMillis());
     }
 
     public void savePlayerLives(UUID playerUUID, int lives) {
-        getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", Integer.valueOf(lives));
+        getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", lives);
+        savePlayerDataConfig();
+    }
+
+    public void savePlayerUpgradedLives(UUID playerUUID, int upgradedLives) {
+        getPlayerDataConfig().set("players." + playerUUID.toString() + ".upgradedLives", upgradedLives);
         savePlayerDataConfig();
     }
 

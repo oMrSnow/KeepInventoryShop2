@@ -4,6 +4,8 @@ import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
+
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -108,16 +110,6 @@ public class KeepInventoryLivesCommand implements CommandExecutor, TabCompleter 
             case "help":
                 displayHelpMessage(player);
                 return true;
-            case "reload":
-                if (sender.hasPermission("keepinventoryshop.reload")) {
-                    this.plugin.reloadPluginConfiguration();
-                    int costPerLife = this.plugin.getConfig().getInt("cost-per-life", 500);
-                    this.plugin.setCostPerLife(costPerLife);
-                    sender.sendMessage(ChatColor.GREEN + "KeepInventoryShop configuration reloaded.");
-                } else {
-                    sender.sendMessage(ChatColor.RED + "You do not have permission to use this command.");
-                }
-                return true;
             case "lives":
                 if (args.length == 1) {
                     showPlayerLives((CommandSender)player, player);
@@ -127,8 +119,33 @@ public class KeepInventoryLivesCommand implements CommandExecutor, TabCompleter 
                     player.sendMessage(ChatColor.RED + "Usage: /keepinventory lives [<player>]");
                 }
                 return true;
+            case "reload":
+                if (sender.hasPermission("keepinventoryshop.reload")) {
+                    this.plugin.reloadPluginConfiguration();
+
+                    int costPerLife = this.plugin.getConfig().getInt("cost-per-life", 500);
+                    double costPerUpgrade = this.plugin.getConfig().getDouble("cost-per-upgrade", 1000);
+                    int initialLives = this.plugin.getConfig().getInt("initial-lives");
+                    int livesOnJoin = this.plugin.getConfig().getInt("lives-on-join");
+                    boolean includeLivesOnJoin = this.plugin.getConfig().getBoolean("include-lives-on-join");
+                    long joinTimer = this.plugin.getConfig().getLong("join-timer") * 1000L;
+
+                    this.plugin.setCostPerLife(costPerLife);
+                    this.plugin.setCostPerUpgrade(costPerUpgrade);
+                    this.plugin.setInitialLives(initialLives);
+                    this.plugin.setLivesOnJoin(livesOnJoin);
+                    this.plugin.setIncludeLivesOnJoin(includeLivesOnJoin);
+                    this.plugin.setJoinTimer(joinTimer);
+
+                    sender.sendMessage(ChatColor.GREEN + "KeepInventoryShop configuration reloaded.");
+                } else {
+                    sender.sendMessage(ChatColor.RED + "You do not have permission to use this command.");
+                }
+                break;
+            default:
+                player.sendMessage(ChatColor.RED + "Unknown command. Type /keepinventory help for a list of commands.");
+                return true;
         }
-        player.sendMessage(ChatColor.RED + "Unknown command. Type /keepinventory help for a list of commands.");
         return true;
     }
 
@@ -153,6 +170,9 @@ public class KeepInventoryLivesCommand implements CommandExecutor, TabCompleter 
                 this.plugin.getPlayerKeepInventoryMap().put(player.getUniqueId(), currentLives - livesToUpgrade);
                 this.plugin.getPlayerUpgradedKeepInventoryMap().put(player.getUniqueId(), this.plugin.getPlayerUpgradedKeepInventoryMap().getOrDefault(player.getUniqueId(), 0) + livesToUpgrade);
                 player.sendMessage(ChatColor.GREEN + "You have successfully upgraded " + livesToUpgrade + " " + getLifeWordForm(livesToUpgrade) + " for " + this.plugin.getEconomy().format(totalCost) + ".");
+
+                // Remove the player from the deactivatedMessageSentPlayers set when they upgrade a life
+                this.plugin.removeDeactivatedMessageSentPlayer(player.getUniqueId());
             } else {
                 player.sendMessage(ChatColor.RED + "You do not have enough money to upgrade " + livesToUpgrade + " " + getLifeWordForm(livesToUpgrade) + ".");
             }
@@ -166,24 +186,41 @@ public class KeepInventoryLivesCommand implements CommandExecutor, TabCompleter 
             sender.sendMessage(ChatColor.RED + "Player not found.");
             return;
         }
-        int remainingLives = ((Integer)this.plugin.getPlayerKeepInventoryMap().getOrDefault(targetPlayer.getUniqueId(), Integer.valueOf(0))).intValue();
-        if (remainingLives == 0) {
-            sender.sendMessage(ChatColor.WHITE + targetPlayer.getName() + " does not have any " + ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.WHITE + " lives.");
+        UUID targetUUID = targetPlayer.getUniqueId();
+        int remainingLives = this.plugin.getPlayerKeepInventoryMap().getOrDefault(targetUUID, 0);
+        int remainingUpgradedLives = this.plugin.getPlayerUpgradedKeepInventoryMap().getOrDefault(targetUUID, 0);
+
+        if (sender.getName().equals(targetPlayer.getName())) {
+            if (remainingLives > 0) {
+                sender.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + remainingLives + " KeepInventory " + ChatColor.WHITE + getLifeWordForm(remainingLives) + " remaining.");
+            }
+            if (remainingUpgradedLives > 0) {
+                sender.sendMessage(ChatColor.WHITE + "You have " + ChatColor.LIGHT_PURPLE + remainingUpgradedLives + " KeepTotem " + ChatColor.WHITE + getLifeWordForm(remainingUpgradedLives) + " remaining.");
+            }
         } else {
-            sender.sendMessage(ChatColor.WHITE + targetPlayer.getName() + " has " + ChatColor.LIGHT_PURPLE + remainingLives + " " + getLifeWordForm(remainingLives) + ChatColor.WHITE + " left.");
+            if (remainingLives > 0) {
+                sender.sendMessage(ChatColor.WHITE + targetPlayer.getName() + " has " + ChatColor.LIGHT_PURPLE + remainingLives + ChatColor.WHITE + " KeepInventory " + getLifeWordForm(remainingLives) + " remaining.");
+            }
+            if (remainingUpgradedLives > 0) {
+                sender.sendMessage(ChatColor.WHITE + targetPlayer.getName() + " has " + ChatColor.LIGHT_PURPLE + remainingUpgradedLives + ChatColor.WHITE + " KeepTotem " + getLifeWordForm(remainingUpgradedLives) + " remaining.");
+            }
         }
     }
+
 
     private void buyLives(Player player, String arg) {
         try {
             int livesToPurchase = Integer.parseInt(arg);
             if (livesToPurchase > 0) {
                 double totalCost = (livesToPurchase * this.plugin.getCostPerLife());
-                EconomyResponse response = this.plugin.getEconomy().withdrawPlayer((OfflinePlayer)player, totalCost);
+                EconomyResponse response = this.plugin.getEconomy().withdrawPlayer((OfflinePlayer) player, totalCost);
                 if (response.transactionSuccess()) {
-                    int currentLives = ((Integer)this.plugin.getPlayerKeepInventoryMap().getOrDefault(player.getUniqueId(), Integer.valueOf(0))).intValue();
-                    this.plugin.getPlayerKeepInventoryMap().put(player.getUniqueId(), Integer.valueOf(currentLives + livesToPurchase));
+                    int currentLives = this.plugin.getPlayerKeepInventoryMap().getOrDefault(player.getUniqueId(), 0);
+                    this.plugin.getPlayerKeepInventoryMap().put(player.getUniqueId(), currentLives + livesToPurchase);
                     player.sendMessage(ChatColor.GREEN + "You have successfully purchased " + livesToPurchase + " " + getLifeWordForm(livesToPurchase) + " for " + this.plugin.getEconomy().format(totalCost) + ".");
+
+                    // Remove the player from the deactivatedMessageSentPlayers set when they buy a life
+                    this.plugin.removeDeactivatedMessageSentPlayer(player.getUniqueId());
                 } else {
                     player.sendMessage(ChatColor.RED + "You do not have enough money to purchase " + livesToPurchase + " " + getLifeWordForm(livesToPurchase) + ".");
                 }
@@ -194,6 +231,7 @@ public class KeepInventoryLivesCommand implements CommandExecutor, TabCompleter 
             player.sendMessage(ChatColor.RED + "Invalid input. Please enter a valid number of lives to purchase.");
         }
     }
+
 
     private void setLives(CommandSender sender, String playerName, String amount) {
         Player targetPlayer = Bukkit.getPlayer(playerName);

@@ -5,12 +5,12 @@ authors: [oMrSnow]
 description: A plugin to purchase Keep Inventory lives
 api-version: 1.19
 depend: [Vault]
-softdepend: [WorldGuard]
+softdepend: [ WorldGuard, ProtocolLib ]
 commands:
   keepinventory:
     description: Keep Inventory lives management command
     usage: /keepinventory [buy|lives|set|add|remove|upgrade|help|reload]
-    aliases: [keepinventory, ki]
+    aliases: [ keepinventory, ki ]
 permissions:
   keepinventoryshop.set:
     description: Allows the player to set lives for others

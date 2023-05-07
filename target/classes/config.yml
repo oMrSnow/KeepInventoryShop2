@@ -8,11 +8,16 @@ include-lives-on-join: true
 lives-on-join: 1
 
 # The timer, in seconds, between giving out lives-on-join
-join-timer: 10800
+join-timer: 7200
 
-# Cost of a single Keep Inventory life
+# Cost of a single KeepInventory life
 cost-per-life: 500
 
+# Cost of a single KeepTotem life
 cost-per-upgrade: 1000
 
+# Use WorldGuard Region Check
 use-region: false
+
+# Custom KeepTotem ResourcePack
+resourcePackURL: "https://www.dropbox.com/s/xlig9ybmxxr06vk/CustomKeepTotemPack.zip?dl=1"
