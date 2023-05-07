@@ -288,13 +288,26 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
                 displayCurrentLives(player, false);
             }
         }
-        // Only set the resource pack if ProtocolLib is installed
+
         if (isProtocolLibInstalled()) {
-            String resourcePackURL = getConfig().getString("resourcePackURL");
-            if (resourcePackURL != null && !resourcePackURL.isEmpty()) {
-                getServer().getScheduler().runTaskLater(this, () -> {
-                    player.setResourcePack(resourcePackURL);
-                }, 5L);
+            loadResourcePack(player);
+        }
+    }
+
+    private void loadResourcePack(Player player) {
+        //this method still loads twice for some reason
+        //maybe test by logging/printing when this method is called
+        //print(loadResourcePack WAS CALLED !!)
+
+        String resourcePackURL = getConfig().getString("resourcePackURL");
+        if (resourcePackURL != null && !resourcePackURL.isEmpty()) {
+            if (!player.hasMetadata("ResourcePackLoaded")) {
+                player.setResourcePack(resourcePackURL);
+                player.setMetadata("ResourcePackLoaded", new FixedMetadataValue(this, true));
+//                getServer().getScheduler().runTaskLater(this, () -> {
+//                    player.setResourcePack(resourcePackURL);
+//                    player.setMetadata("ResourcePackLoaded", new FixedMetadataValue(this, true));
+//                }, 20L);
             }
         }
     }
@@ -483,6 +496,9 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         savePlayerUpgradedLives(playerUUID, currentUpgradedLives);
 
         this.lastQuitTimestamp.put(playerUUID, System.currentTimeMillis());
+        if (player.hasMetadata("ResourcePackLoaded")) {
+            player.removeMetadata("ResourcePackLoaded", this);
+        }
     }
 
     public void savePlayerLives(UUID playerUUID, int lives) {

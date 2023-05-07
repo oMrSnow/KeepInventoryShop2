@@ -42,12 +42,12 @@ public class CustomSwirlingTask extends BukkitRunnable {
                 stand.setGravity(false);
                 stand.setCustomNameVisible(false);
                 stand.setInvulnerable(true);
-
+//possible misconfiguration
                 ItemStack keepTotem = new ItemStack(Material.TOTEM_OF_UNDYING);
                 ItemMeta keepTotemMeta = keepTotem.getItemMeta();
 
                 if (keepTotemMeta != null) {
-                    keepTotemMeta.setCustomModelData(649);
+                    keepTotemMeta.setCustomModelData(116469);
                     keepTotem.setItemMeta(keepTotemMeta);
                 }
 
