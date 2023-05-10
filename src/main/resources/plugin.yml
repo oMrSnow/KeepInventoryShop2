@@ -1,5 +1,5 @@
 name: KeepInventoryShop
-version: 1.5
+version: 2.1
 main: keepinventoryshop.KeepInventoryShop
 authors: [oMrSnow]
 description: A plugin to purchase Keep Inventory lives

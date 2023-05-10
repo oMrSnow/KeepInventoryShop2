@@ -47,7 +47,7 @@ public class CustomSwirlingTask extends BukkitRunnable {
                 ItemMeta keepTotemMeta = keepTotem.getItemMeta();
 
                 if (keepTotemMeta != null) {
-                    keepTotemMeta.setCustomModelData(116469);
+                    keepTotemMeta.setCustomModelData(1164);
                     keepTotem.setItemMeta(keepTotemMeta);
                 }
 

@@ -38,6 +38,7 @@ import org.bukkit.util.EulerAngle;
 
 public class KeepInventoryShop extends JavaPlugin implements Listener {
     private static KeepInventoryShop instance;
+
     public static KeepInventoryShop getInstance() {
         return instance;
     }
@@ -76,12 +77,16 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     public boolean isUseRegion() {
         return useRegion;
     }
+    public void setUseRegion(boolean useRegion) {
+        this.useRegion = useRegion;
+    }
     private Set<UUID> noLivesPlayers = new HashSet<>();
     private Map<UUID, Integer> playerKeepInventoryMap = new HashMap<>();
 
     private Map<UUID, Long> lastLoginTimestamp;
 
     private final Map<UUID, Long> lastLivesReceivedTimestamp = new HashMap<>();
+    private HashMap<UUID, Long> lastJoinTimestamp = new HashMap<>();
 
     private Map<UUID, Long> lastQuitTimestamp;
 
@@ -115,6 +120,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     private void playTotemAnimation(ArmorStand armorStand) {
         armorStand.getWorld().playSound(armorStand.getLocation(), Sound.ITEM_TOTEM_USE, 1.0F, 1.0F);
     }
+    private Map<UUID, Integer> playerUpgradedKeepInventoryMap = new HashMap<>();
 
     public void loadPluginConfiguration() {
         getConfig().options().copyDefaults(true);
@@ -122,8 +128,11 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         costPerLife = getConfig().getInt("cost-per-life", 500);
         costPerUpgrade = getConfig().getInt("cost-per-upgrade", 1000);
         useRegion = getConfig().getBoolean("use-region", false);
+        initialLives = getConfig().getInt("initial-lives");
+        livesOnJoin = getConfig().getInt("lives-on-join");
+        includeLivesOnJoin = getConfig().getBoolean("include-lives-on-join");
+        joinTimer = getConfig().getLong("join-timer") * 1000L;
     }
-    private Map<UUID, Integer> playerUpgradedKeepInventoryMap = new HashMap<>();
 
     public void onEnable() {
         instance = this;
@@ -131,10 +140,9 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         if (!setupEconomy()) {
             getLogger().severe("Could not find Vault! Disabling plugin.");
             Bukkit.getPluginManager().disablePlugin((Plugin)this);
-            Bukkit.getPluginManager().registerEvents(this, (Plugin)this);
-            getServer().getPluginManager().registerEvents(this, this);
             return;
         }
+        loadPluginConfiguration();
         saveDefaultConfig();
         this.playerKeepInventoryMap = new HashMap<>();
         this.initialLives = getConfig().getInt("initial-lives");
@@ -152,7 +160,8 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         getCommand("keepinventory").setExecutor(new KeepInventoryLivesCommand(this));
         getCommand("keepinventory").setTabCompleter(new KeepInventoryLivesCommand(this));
         deactivatedMessageSentPlayers = new HashSet<>();
-        getServer().getPluginManager().registerEvents(this, this);
+        startLastLoginUpdateTask();
+        startPeriodicCheckTask();
     }
     public double getCostPerUpgrade() {
         return costPerUpgrade;
@@ -184,15 +193,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             UUID playerUUID = player.getUniqueId();
             this.lastLoginTimestamp.put(playerUUID, Long.valueOf(System.currentTimeMillis()));
         }
-    }
-
-    public void reloadPluginConfiguration() {
-        reloadConfig();
-        this.initialLives = getConfig().getInt("initial-lives");
-        this.livesOnJoin = getConfig().getInt("lives-on-join");
-        this.includeLivesOnJoin = getConfig().getBoolean("include-lives-on-join");
-        this.joinTimer = getConfig().getLong("join-timer") * 1000L;
-        useRegion = getConfig().getBoolean("use-region", false);
     }
 
     private void loadPlayerDataConfig() {
@@ -277,27 +277,26 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", Integer.valueOf(this.initialLives));
             savePlayerDataConfig();
             player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.GREEN + " Activated!" + ChatColor.WHITE + " You have " + ChatColor.LIGHT_PURPLE + this.initialLives + ChatColor.WHITE + " Initial " + getLifeWordForm(this.initialLives) + "!");
+
+            // Set the lastJoinTimestamp for the player
+            this.lastJoinTimestamp.put(playerUUID, System.currentTimeMillis());
         } else {
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(savedLives));
             this.playerUpgradedKeepInventoryMap.put(playerUUID, savedUpgradedLives);
 
             long timeDifference = calculateTimeDifference(playerUUID);
-            if (timeDifference >= this.joinTimer) {
+            if (timeDifference >= this.joinTimer && this.includeLivesOnJoin) {
                 giveLivesOnJoin(player);
+
+                // Set the lastJoinTimestamp for the player
+                this.lastJoinTimestamp.put(playerUUID, System.currentTimeMillis());
             } else {
                 displayCurrentLives(player, false);
             }
         }
-
-        if (isProtocolLibInstalled()) {
-            loadResourcePack(player);
-        }
     }
 
     private void loadResourcePack(Player player) {
-        //this method still loads twice for some reason
-        //maybe test by logging/printing when this method is called
-        //print(loadResourcePack WAS CALLED !!)
 
         String resourcePackURL = getConfig().getString("resourcePackURL");
         if (resourcePackURL != null && !resourcePackURL.isEmpty()) {
@@ -313,10 +312,9 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     }
 
     private long calculateTimeDifference(UUID playerUUID) {
-        long lastLivesReceived = ((Long)this.lastLivesReceivedTimestamp.getOrDefault(playerUUID, Long.valueOf(0L))).longValue();
+        long lastJoin = this.lastJoinTimestamp.getOrDefault(playerUUID, Long.valueOf(0L));
         long now = System.currentTimeMillis();
-        long timeDifference = now - lastLivesReceived;
-        return timeDifference;
+        return now - lastJoin;
     }
 
     private void displayCurrentLives(Player player, boolean onJoin) {
@@ -337,6 +335,45 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.RED + " Deactivated!" + ChatColor.WHITE + " You have 0 lives left.");
         }
     }
+    private void addLivesAndNotify(Player player, long timeDifference) {
+        UUID playerUUID = player.getUniqueId();
+        if (timeDifference >= this.joinTimer && this.includeLivesOnJoin) {
+            int currentLives = this.playerKeepInventoryMap.get(playerUUID);
+            int newLives = currentLives + this.livesOnJoin;
+            this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(newLives));
+            getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", newLives);
+            savePlayerDataConfig();
+
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "KeepInventory" + ChatColor.WHITE + " Timer Has Ended");
+            player.sendMessage(ChatColor.WHITE + "You received " + ChatColor.LIGHT_PURPLE + this.livesOnJoin + " " + ChatColor.WHITE + getLifeWordForm(this.livesOnJoin) + ". You now have " + ChatColor.LIGHT_PURPLE + newLives + ChatColor.WHITE + " " + getLifeWordForm(newLives) + ".");
+
+            deactivatedMessageSentPlayers.remove(playerUUID);
+        } else {
+            displayCurrentLives(player, false);
+        }
+    }
+
+    private void startPeriodicCheckTask() {
+        Bukkit.getScheduler().runTaskTimer(this, new Runnable() {
+            @Override
+            public void run() {
+                for (Player player : getServer().getOnlinePlayers()) {
+                    UUID playerUUID = player.getUniqueId();
+                    long timeDifference = calculateTimeDifference(playerUUID);
+                    if (timeDifference >= joinTimer && includeLivesOnJoin) {
+                        addLivesAndNotify(player, timeDifference);
+                        lastJoinTimestamp.put(playerUUID, System.currentTimeMillis());
+                    }
+                }
+            }
+        }, 0L, 20L * 60L); // Check every minute
+    }
+    private long getOnlineTime(Player player) {
+        UUID playerUUID = player.getUniqueId();
+        long lastLogin = this.lastLoginTimestamp.getOrDefault(playerUUID, Long.valueOf(System.currentTimeMillis()));
+        long now = System.currentTimeMillis();
+        return now - lastLogin;
+    }
 
     private void giveLivesOnJoin(Player player) {
         UUID playerUUID = player.getUniqueId();
@@ -344,23 +381,12 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         long now = System.currentTimeMillis();
         long lastQuit = this.lastQuitTimestamp.getOrDefault(playerUUID, Long.valueOf(0L));
         long timeDifference = now - Math.max(lastLogin, lastQuit);
-        long timeOnline = now - this.lastLoginTimestamp.getOrDefault(playerUUID, Long.valueOf(now));
-        boolean isFirstJoin = !getPlayerDataConfig().contains("players." + playerUUID.toString() + ".hasJoinedBefore");
+        long timeOnline = getOnlineTime(player);
         timeDifference += timeOnline;
-        if (timeDifference >= this.joinTimer) {
-            int currentLives = this.playerKeepInventoryMap.get(playerUUID);
-            int newLives = currentLives + this.livesOnJoin;
-            this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(newLives));
-            getPlayerDataConfig().set("players." + playerUUID.toString() + ".lives", newLives);
-            savePlayerDataConfig();
-
-            player.sendMessage(ChatColor.WHITE + "You received " + ChatColor.LIGHT_PURPLE + this.livesOnJoin + " KeepInventory " + ChatColor.WHITE + getLifeWordForm(this.livesOnJoin) + ". You now have " + ChatColor.LIGHT_PURPLE + newLives + ChatColor.WHITE + " " + getLifeWordForm(newLives) + ".");
-
-            deactivatedMessageSentPlayers.remove(playerUUID);
-        } else {
-            displayCurrentLives(player, false);
-        }
+        addLivesAndNotify(player, timeDifference);
     }
+
+
 
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent event) {

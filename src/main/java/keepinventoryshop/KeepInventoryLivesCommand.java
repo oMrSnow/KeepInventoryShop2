@@ -20,7 +20,6 @@ import org.bukkit.util.StringUtil;
 public class KeepInventoryLivesCommand implements CommandExecutor, TabCompleter {
 
     private KeepInventoryShop plugin;
-
     private int costPerLife;
 
     public KeepInventoryLivesCommand(KeepInventoryShop plugin) {
@@ -121,21 +120,25 @@ public class KeepInventoryLivesCommand implements CommandExecutor, TabCompleter 
                 return true;
             case "reload":
                 if (sender.hasPermission("keepinventoryshop.reload")) {
-                    this.plugin.reloadPluginConfiguration();
+                    this.plugin.reloadConfig(); // Reload the entire config.
 
+                    // Load all the configuration values again from the newly reloaded config file.
                     int costPerLife = this.plugin.getConfig().getInt("cost-per-life", 500);
                     double costPerUpgrade = this.plugin.getConfig().getDouble("cost-per-upgrade", 1000);
                     int initialLives = this.plugin.getConfig().getInt("initial-lives");
                     int livesOnJoin = this.plugin.getConfig().getInt("lives-on-join");
                     boolean includeLivesOnJoin = this.plugin.getConfig().getBoolean("include-lives-on-join");
                     long joinTimer = this.plugin.getConfig().getLong("join-timer") * 1000L;
+                    boolean useRegion = this.plugin.getConfig().getBoolean("use-region");
 
+                    // Set all the configuration values again using the new values.
                     this.plugin.setCostPerLife(costPerLife);
                     this.plugin.setCostPerUpgrade(costPerUpgrade);
                     this.plugin.setInitialLives(initialLives);
                     this.plugin.setLivesOnJoin(livesOnJoin);
                     this.plugin.setIncludeLivesOnJoin(includeLivesOnJoin);
                     this.plugin.setJoinTimer(joinTimer);
+                    this.plugin.setUseRegion(useRegion);
 
                     sender.sendMessage(ChatColor.GREEN + "KeepInventoryShop configuration reloaded.");
                 } else {
