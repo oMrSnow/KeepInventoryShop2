@@ -143,7 +143,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             return;
         }
         loadPluginConfiguration();
-        saveDefaultConfig();
+        saveDefaultConfig(); // Change this line back to saveDefaultConfig()
         this.playerKeepInventoryMap = new HashMap<>();
         this.initialLives = getConfig().getInt("initial-lives");
         this.livesOnJoin = getConfig().getInt("lives-on-join");
@@ -163,6 +163,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         startLastLoginUpdateTask();
         startPeriodicCheckTask();
     }
+
     public double getCostPerUpgrade() {
         return costPerUpgrade;
     }
@@ -264,6 +265,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
+        loadResourcePack(player);
         UUID playerUUID = player.getUniqueId();
         int savedLives = getPlayerDataConfig().getInt("players." + playerUUID.toString() + ".lives", -1);
         int savedUpgradedLives = getPlayerDataConfig().getInt("players." + playerUUID.toString() + ".upgradedLives", -1);
@@ -303,10 +305,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             if (!player.hasMetadata("ResourcePackLoaded")) {
                 player.setResourcePack(resourcePackURL);
                 player.setMetadata("ResourcePackLoaded", new FixedMetadataValue(this, true));
-//                getServer().getScheduler().runTaskLater(this, () -> {
-//                    player.setResourcePack(resourcePackURL);
-//                    player.setMetadata("ResourcePackLoaded", new FixedMetadataValue(this, true));
-//                }, 20L);
             }
         }
     }
