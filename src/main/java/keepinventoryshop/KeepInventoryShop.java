@@ -8,7 +8,10 @@ import com.sk89q.worldguard.protection.ApplicableRegionSet;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.util.*;
 
 import net.milkbowl.vault.economy.Economy;
@@ -143,7 +146,7 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
             return;
         }
         loadPluginConfiguration();
-        saveDefaultConfig(); // Change this line back to saveDefaultConfig()
+        saveDefaultConfig();
         this.playerKeepInventoryMap = new HashMap<>();
         this.initialLives = getConfig().getInt("initial-lives");
         this.livesOnJoin = getConfig().getInt("lives-on-join");
@@ -265,7 +268,6 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        loadResourcePack(player);
         UUID playerUUID = player.getUniqueId();
         int savedLives = getPlayerDataConfig().getInt("players." + playerUUID.toString() + ".lives", -1);
         int savedUpgradedLives = getPlayerDataConfig().getInt("players." + playerUUID.toString() + ".upgradedLives", -1);
@@ -273,6 +275,10 @@ public class KeepInventoryShop extends JavaPlugin implements Listener {
         boolean isFirstJoin = !getPlayerDataConfig().contains("players." + playerUUID.toString() + ".hasJoinedBefore");
         getPlayerDataConfig().set("players." + playerUUID.toString() + ".hasJoinedBefore", true);
         savePlayerDataConfig();
+
+        if (isProtocolLibInstalled()) {
+            loadResourcePack(player);
+        }
 
         if (isFirstJoin) {
             this.playerKeepInventoryMap.put(playerUUID, Integer.valueOf(this.initialLives));
